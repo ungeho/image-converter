@@ -51,9 +51,9 @@ async function main() {
 
   await page.locator("select").nth(1).selectOption("image/webp");
   await waitForConversion(page);
-  await page.check('input[type="checkbox"]');
-  await page.fill('input[placeholder="例: 1200"]', "960");
-  await page.fill('input[placeholder="例: 800"]', "640");
+  await page.getByLabel("リサイズを有効にする").check();
+  await page.locator('input[placeholder="例: 1200"]').first().fill("960");
+  await page.locator('input[placeholder="例: 800"]').first().fill("640");
   await waitForConversion(page);
   await screenshot(page, "step-03-settings.png");
 

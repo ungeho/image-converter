@@ -29,7 +29,7 @@ async function convertOne(entry, options) {
     transform,
     targetSize.width,
     targetSize.height,
-    options.outputFormat === "image/jpeg",
+    options.outputFormat === "image/jpeg" ? options.jpegBackground : "",
   );
 
   const convertedBlob = await canvas.convertToBlob({ type: options.outputFormat, quality: options.quality });
@@ -49,18 +49,18 @@ async function convertOne(entry, options) {
 self.addEventListener("message", async (event) => {
   if (event.data?.type !== "convert") return;
 
-  const { entries, outputFormat, quality, extension, resizeConfig } = event.data;
+  const { entries, outputFormat, quality, extension, resizeConfig, jpegBackground } = event.data;
 
   try {
     const converted = [];
     for (let index = 0; index < entries.length; index += 1) {
       const entry = entries[index];
       try {
-        converted.push(await convertOne(entry, { outputFormat, quality, extension, resizeConfig }));
+        converted.push(await convertOne(entry, { outputFormat, quality, extension, resizeConfig, jpegBackground }));
       } catch (error) {
         converted.push({
           id: entry.id,
-          outputName: `${entry.fileName.replace(/\.[^.]+$/, "") || "converted-image"}.${extension}`,
+          outputName: entry.outputName ?? `${entry.fileName.replace(/\.[^.]+$/, "") || "converted-image"}.${extension}`,
           width: 0,
           height: 0,
           buffer: null,

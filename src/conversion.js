@@ -63,6 +63,7 @@ export const PRESET_OPTIONS = [
 export const DEFAULT_FORMAT = BASE_FORMAT_OPTIONS[0].value;
 export const DEFAULT_PRESET = PRESET_OPTIONS[0].value;
 export const DEFAULT_TRANSFORM = { rotation: 0, flipH: false, flipV: false };
+export const DEFAULT_JPEG_BACKGROUND = "#ffffff";
 
 export function formatBytes(bytes) {
   if (!bytes) return "0 B";
@@ -83,9 +84,15 @@ export function normalizeDimension(value) {
   return Math.round(numeric);
 }
 
-export function getOutputName(name, extension) {
+export function getOutputName(name, extension, naming = {}, index = null) {
   const baseName = name.replace(/\.[^.]+$/, "") || "converted-image";
-  return `${baseName}.${extension}`;
+  const prefix = naming.prefix ?? "";
+  const suffix = naming.suffix ?? "";
+  const number = naming.includeIndex && index !== null ? String(index + 1).padStart(2, "0") : "";
+  const divider = prefix || suffix || number ? "-" : "";
+  return `${prefix}${prefix ? "-" : ""}${baseName}${divider}${suffix}${suffix && number ? "-" : ""}${number}.${extension}`
+    .replace(/--+/g, "-")
+    .replace(/-\./g, ".");
 }
 
 export function getRotatedSize(width, height, rotation) {
@@ -234,9 +241,9 @@ export function getFinalTargetSize(width, height, orientation, transform, resize
   return getTargetSize(rotated.width, rotated.height, resizeConfig);
 }
 
-export function drawImageWithOrientation(context, image, orientation, targetWidth, targetHeight, fillWhite) {
-  if (fillWhite) {
-    context.fillStyle = "#ffffff";
+export function drawImageWithOrientation(context, image, orientation, targetWidth, targetHeight, backgroundColor = "") {
+  if (backgroundColor) {
+    context.fillStyle = backgroundColor;
     context.fillRect(0, 0, context.canvas.width, context.canvas.height);
   }
 
@@ -278,9 +285,9 @@ export function drawImageWithOrientation(context, image, orientation, targetWidt
   context.drawImage(image, 0, 0, needsSwap ? targetHeight : targetWidth, needsSwap ? targetWidth : targetHeight);
 }
 
-export function applyTransformToCanvas(context, source, transform, targetWidth, targetHeight, fillWhite) {
-  if (fillWhite) {
-    context.fillStyle = "#ffffff";
+export function applyTransformToCanvas(context, source, transform, targetWidth, targetHeight, backgroundColor = "") {
+  if (backgroundColor) {
+    context.fillStyle = backgroundColor;
     context.fillRect(0, 0, context.canvas.width, context.canvas.height);
   }
 
@@ -328,11 +335,11 @@ export async function renderOrientedCanvas(image, orientation) {
   canvas.height = oriented.height;
   const context = canvas.getContext("2d");
   if (!context) throw new Error("Canvas が利用できません。");
-  drawImageWithOrientation(context, image, orientation, oriented.width, oriented.height, false);
+  drawImageWithOrientation(context, image, orientation, oriented.width, oriented.height, "");
   return canvas;
 }
 
-export async function convertEntryOnMainThread(entry, options, extension) {
+export async function convertEntryOnMainThread(entry, options, extension, index = null) {
   const buffer = await readFileAsArrayBuffer(entry.file);
   const orientation = entry.orientation ?? getExifOrientation(buffer);
   const image = await fileToImage(entry.file);
@@ -350,7 +357,7 @@ export async function convertEntryOnMainThread(entry, options, extension) {
     entry.transform ?? DEFAULT_TRANSFORM,
     targetSize.width,
     targetSize.height,
-    options.outputFormat === "image/jpeg",
+    options.outputFormat === "image/jpeg" ? options.jpegBackground : "",
   );
 
   const blob = await canvasToBlob(canvas, options.outputFormat, options.quality);
@@ -359,7 +366,7 @@ export async function convertEntryOnMainThread(entry, options, extension) {
     blob,
     width: canvas.width,
     height: canvas.height,
-    outputName: getOutputName(entry.file.name, extension),
+    outputName: getOutputName(entry.file.name, extension, options.naming, index),
     error: "",
     engine: "main-thread",
     orientation,

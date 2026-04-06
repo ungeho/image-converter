@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   BASE_FORMAT_OPTIONS,
   DEFAULT_FORMAT,
+  DEFAULT_JPEG_BACKGROUND,
   DEFAULT_PRESET,
   DEFAULT_TRANSFORM,
   PRESET_OPTIONS,
@@ -39,16 +40,33 @@ function moveItem(list, from, to) {
   return next;
 }
 
+function snapshotState(sourceEntries, selectedId, selectedIds) {
+  return {
+    sourceEntries: sourceEntries.map((entry) => ({
+      ...entry,
+      transform: { ...entry.transform },
+    })),
+    selectedId,
+    selectedIds: [...selectedIds],
+  };
+}
+
 export default function App() {
   const inputRef = useRef(null);
   const workerRef = useRef(null);
   const convertedEntriesRef = useRef([]);
   const sourceEntriesRef = useRef([]);
+  const selectedIdRef = useRef("");
+  const selectedIdsRef = useRef([]);
+  const cancelConversionRef = useRef(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [draggedId, setDraggedId] = useState("");
   const [sourceEntries, setSourceEntries] = useState([]);
   const [convertedEntries, setConvertedEntries] = useState([]);
   const [selectedId, setSelectedId] = useState("");
+  const [selectedIds, setSelectedIds] = useState([]);
   const [outputFormat, setOutputFormat] = useState(DEFAULT_FORMAT);
+  const [jpegBackground, setJpegBackground] = useState(DEFAULT_JPEG_BACKGROUND);
   const [quality, setQuality] = useState(0.92);
   const [resizeEnabled, setResizeEnabled] = useState(false);
   const [resizeMode, setResizeMode] = useState("contain");
@@ -64,6 +82,11 @@ export default function App() {
   const [progress, setProgress] = useState({ completed: 0, total: 0 });
   const [conversionTrigger, setConversionTrigger] = useState({ mode: "all", nonce: 0 });
   const [comparePosition, setComparePosition] = useState(50);
+  const [fileNamePrefix, setFileNamePrefix] = useState("");
+  const [fileNameSuffix, setFileNameSuffix] = useState("");
+  const [includeIndex, setIncludeIndex] = useState(false);
+  const [history, setHistory] = useState([]);
+  const [future, setFuture] = useState([]);
 
   const formatOptions = useMemo(
     () => BASE_FORMAT_OPTIONS.filter((option) => option.value !== "image/avif" || avifSupported),
@@ -89,6 +112,10 @@ export default function App() {
     () => sourceEntries.find((entry) => entry.id === selectedId) ?? sourceEntries[0] ?? null,
     [selectedId, sourceEntries],
   );
+  const activeIds = selectedIds.length ? selectedIds : selectedId ? [selectedId] : [];
+  const resolvedJpegBackground = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(jpegBackground)
+    ? jpegBackground
+    : DEFAULT_JPEG_BACKGROUND;
   const selectedConverted = useMemo(
     () => convertedEntries.find((entry) => entry.id === selectedSource?.id) ?? null,
     [convertedEntries, selectedSource],
@@ -112,6 +139,28 @@ export default function App() {
   useEffect(() => {
     sourceEntriesRef.current = sourceEntries;
   }, [sourceEntries]);
+
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  }, [selectedId]);
+
+  useEffect(() => {
+    selectedIdsRef.current = selectedIds;
+  }, [selectedIds]);
+
+  useEffect(() => {
+    setSelectedIds((previous) => previous.filter((id) => sourceEntries.some((entry) => entry.id === id)));
+  }, [sourceEntries]);
+
+  useEffect(() => {
+    if (!sourceEntries.length) {
+      if (selectedId) setSelectedId("");
+      return;
+    }
+    if (!selectedId || !sourceEntries.some((entry) => entry.id === selectedId)) {
+      setSelectedId(sourceEntries[0].id);
+    }
+  }, [selectedId, sourceEntries]);
 
   useEffect(() => {
     const previous = convertedEntriesRef.current;
@@ -144,6 +193,58 @@ export default function App() {
     setResizeHeight(presetOption.settings.resizeHeight);
   }, [availablePresets, preset]);
 
+  function commitSourceEntries(updater, nextSelectedId = null, nextSelectedIds = null) {
+    setSourceEntries((previous) => {
+      const next = typeof updater === "function" ? updater(previous) : updater;
+      if (next === previous) return previous;
+
+      setHistory((current) => [...current, snapshotState(previous, selectedIdRef.current, selectedIdsRef.current)]);
+      setFuture([]);
+
+      if (nextSelectedId !== null) {
+        setSelectedId(nextSelectedId);
+      } else if (selectedIdRef.current && !next.some((entry) => entry.id === selectedIdRef.current)) {
+        setSelectedId(next[0]?.id ?? "");
+      }
+
+      if (nextSelectedIds !== null) {
+        setSelectedIds(nextSelectedIds);
+      }
+
+      return next;
+    });
+  }
+
+  function handleUndo() {
+    setHistory((current) => {
+      if (!current.length) return current;
+      const previous = current[current.length - 1];
+      setFuture((futureCurrent) => [
+        snapshotState(sourceEntriesRef.current, selectedIdRef.current, selectedIdsRef.current),
+        ...futureCurrent,
+      ]);
+      setSourceEntries(previous.sourceEntries);
+      setSelectedId(previous.selectedId);
+      setSelectedIds(previous.selectedIds);
+      return current.slice(0, -1);
+    });
+  }
+
+  function handleRedo() {
+    setFuture((current) => {
+      if (!current.length) return current;
+      const next = current[0];
+      setHistory((historyCurrent) => [
+        ...historyCurrent,
+        snapshotState(sourceEntriesRef.current, selectedIdRef.current, selectedIdsRef.current),
+      ]);
+      setSourceEntries(next.sourceEntries);
+      setSelectedId(next.selectedId);
+      setSelectedIds(next.selectedIds);
+      return current.slice(1);
+    });
+  }
+
   useEffect(() => {
     setConversionTrigger((previous) => ({ mode: "all", nonce: previous.nonce + 1 }));
   }, [sourceEntries, outputFormat, quality, resizeEnabled, resizeMode, keepAspect, resizeWidth, resizeHeight, currentOption.extension]);
@@ -165,6 +266,12 @@ export default function App() {
     const options = {
       outputFormat,
       quality,
+      naming: {
+        prefix: fileNamePrefix.trim(),
+        suffix: fileNameSuffix.trim(),
+        includeIndex,
+      },
+      jpegBackground: resolvedJpegBackground,
       resizeConfig: {
         enabled: resizeEnabled,
         mode: resizeMode,
@@ -184,6 +291,7 @@ export default function App() {
           fileName: entry.file.name,
           fileType: entry.file.type,
           transform: entry.transform,
+          outputName: getOutputName(entry.file.name, extension, options.naming, sourceEntries.findIndex((item) => item.id === entry.id)),
           buffer: await readFileAsArrayBuffer(entry.file),
         })),
       );
@@ -226,7 +334,15 @@ export default function App() {
         worker.addEventListener("message", onMessage);
         worker.addEventListener("error", onError);
         worker.postMessage(
-          { type: "convert", outputFormat, quality, extension, resizeConfig: options.resizeConfig, entries: payloadEntries },
+          {
+            type: "convert",
+            outputFormat,
+            quality,
+            extension,
+            jpegBackground: resolvedJpegBackground,
+            resizeConfig: options.resizeConfig,
+            entries: payloadEntries,
+          },
           payloadEntries.map((entry) => entry.buffer),
         );
       });
@@ -235,18 +351,34 @@ export default function App() {
     async function convertOnMainThread(extension) {
       const nextEntries = [];
       for (let index = 0; index < targetEntries.length; index += 1) {
+        if (cancelConversionRef.current) {
+          throw new Error("変換をキャンセルしました。");
+        }
         const entry = targetEntries[index];
         setProgress({ completed: index, total: targetEntries.length });
         setStatus(`${index} / ${targetEntries.length} 件を変換中です...`);
         try {
-          const converted = await convertEntryOnMainThread(entry, options, extension);
+          const converted = await convertEntryOnMainThread(
+            entry,
+            options,
+            extension,
+            sourceEntries.findIndex((item) => item.id === entry.id),
+          );
           nextEntries.push({ ...converted, url: URL.createObjectURL(converted.blob) });
         } catch (error) {
+          if (error instanceof Error && error.message === "変換をキャンセルしました。") {
+            throw error;
+          }
           nextEntries.push({
             id: entry.id,
             blob: null,
             url: "",
-            outputName: getOutputName(entry.file.name, extension),
+            outputName: getOutputName(
+              entry.file.name,
+              extension,
+              options.naming,
+              sourceEntries.findIndex((item) => item.id === entry.id),
+            ),
             width: 0,
             height: 0,
             error: error instanceof Error ? error.message : "変換に失敗しました。",
@@ -261,6 +393,7 @@ export default function App() {
 
     async function runConversion() {
       setIsConverting(true);
+      cancelConversionRef.current = false;
       setProgress({ completed: 0, total: targetEntries.length });
       setStatus(
         conversionTrigger.mode === "failed"
@@ -274,7 +407,11 @@ export default function App() {
         try {
           nextEntries = await convertWithWorker(extension);
           setConversionEngine("worker");
-        } catch {
+        } catch (error) {
+          if (cancelConversionRef.current || (error instanceof Error && error.message === "変換をキャンセルしました。")) {
+            setStatus("変換をキャンセルしました。");
+            return;
+          }
           nextEntries = await convertOnMainThread(extension);
           setConversionEngine("main-thread");
         }
@@ -301,7 +438,7 @@ export default function App() {
     return () => {
       isActive = false;
     };
-  }, [conversionTrigger, currentOption.extension, keepAspect, outputFormat, quality, resizeEnabled, resizeHeight, resizeMode, resizeWidth, sourceEntries]);
+  }, [conversionTrigger, currentOption.extension, fileNamePrefix, fileNameSuffix, includeIndex, keepAspect, outputFormat, quality, resizeEnabled, resizeHeight, resizeMode, resizeWidth, resolvedJpegBackground, sourceEntries]);
 
   useEffect(() => {
     function onPaste(event) {
@@ -339,45 +476,84 @@ export default function App() {
       }),
     );
 
-    setSourceEntries((previous) => [...previous, ...nextEntries]);
-    setSelectedId((previous) => previous || nextEntries[0].id);
+    const nextPrimaryId = selectedIdRef.current || nextEntries[0].id;
+    const nextSelection = selectedIdsRef.current.length ? selectedIdsRef.current : [nextPrimaryId];
+    commitSourceEntries((previous) => [...previous, ...nextEntries], nextPrimaryId, nextSelection);
     setStatus(nextStatus ?? `${imageFiles.length}件の画像を追加しました。`);
   }
 
   function removeEntry(id) {
-    setSourceEntries((previous) => {
+    commitSourceEntries((previous) => {
       const target = previous.find((entry) => entry.id === id);
       if (target) URL.revokeObjectURL(target.sourceUrl);
       const filtered = previous.filter((entry) => entry.id !== id);
-      if (!filtered.length) setSelectedId("");
-      else if (selectedId === id) setSelectedId(filtered[0].id);
       return filtered;
-    });
+    }, selectedId === id ? (sourceEntries.find((entry) => entry.id !== id)?.id ?? "") : selectedId, selectedIds.filter((selected) => selected !== id));
     setConvertedEntries((previous) => previous.filter((entry) => entry.id !== id));
   }
 
   function clearAll() {
     for (const entry of sourceEntriesRef.current) URL.revokeObjectURL(entry.sourceUrl);
-    setSourceEntries([]);
+    commitSourceEntries([], "", []);
     setConvertedEntries([]);
-    setSelectedId("");
     setStatus("画像をドロップ、選択、または貼り付けしてください。");
     setProgress({ completed: 0, total: 0 });
   }
 
   function updateSelectedTransform(nextTransform) {
-    if (!selectedId) return;
-    setSourceEntries((previous) =>
+    if (!activeIds.length) return;
+    commitSourceEntries((previous) =>
       previous.map((entry) =>
-        entry.id === selectedId
+        activeIds.includes(entry.id)
           ? { ...entry, transform: { ...entry.transform, ...nextTransform } }
           : entry,
       ),
     );
   }
 
+  function toggleSelected(id, multi) {
+    if (!multi) {
+      setSelectedId(id);
+      setSelectedIds([id]);
+      return;
+    }
+    setSelectedIds((previous) => {
+      const next = previous.includes(id) ? previous.filter((item) => item !== id) : [...previous, id];
+      if (!next.length) {
+        setSelectedId(id);
+        return [id];
+      }
+      setSelectedId(next[next.length - 1]);
+      return next;
+    });
+  }
+
+  function applyBulkTransform(transformUpdater) {
+    if (!activeIds.length) return;
+    commitSourceEntries((previous) =>
+      previous.map((entry) =>
+        activeIds.includes(entry.id)
+          ? { ...entry, transform: transformUpdater(entry.transform) }
+          : entry,
+      ),
+    );
+  }
+
+  function removeSelectedEntries() {
+    if (!activeIds.length) return;
+    for (const entry of sourceEntries.filter((item) => activeIds.includes(item.id))) {
+      URL.revokeObjectURL(entry.sourceUrl);
+    }
+    commitSourceEntries(
+      (previous) => previous.filter((entry) => !activeIds.includes(entry.id)),
+      sourceEntries.find((entry) => !activeIds.includes(entry.id))?.id ?? "",
+      [],
+    );
+    setConvertedEntries((previous) => previous.filter((entry) => !activeIds.includes(entry.id)));
+  }
+
   function moveEntry(id, direction) {
-    setSourceEntries((previous) => {
+    commitSourceEntries((previous) => {
       const index = previous.findIndex((entry) => entry.id === id);
       if (index < 0) return previous;
       const nextIndex = direction === "up" ? index - 1 : index + 1;
@@ -420,6 +596,14 @@ export default function App() {
     setConversionTrigger((previous) => ({ mode: "failed", nonce: previous.nonce + 1 }));
   }
 
+  function handleCancelConversion() {
+    cancelConversionRef.current = true;
+    workerRef.current?.terminate();
+    workerRef.current = createWorker();
+    setIsConverting(false);
+    setStatus("変換をキャンセルしました。");
+  }
+
   function handleDownloadAll() {
     sourceEntries
       .map((source) => convertedEntries.find((entry) => entry.id === source.id))
@@ -448,7 +632,20 @@ export default function App() {
       const manifest = buildManifest(
         downloadableEntries,
         sourceEntries,
-        { preset, outputFormat, quality, resizeEnabled, resizeMode, keepAspect, resizeWidth, resizeHeight },
+        {
+          preset,
+          outputFormat,
+          quality,
+          jpegBackground: resolvedJpegBackground,
+          resizeEnabled,
+          resizeMode,
+          keepAspect,
+          resizeWidth,
+          resizeHeight,
+          fileNamePrefix,
+          fileNameSuffix,
+          includeIndex,
+        },
         conversionEngine,
       );
       zip.file("manifest.json", JSON.stringify(manifest, null, 2));
@@ -473,15 +670,38 @@ export default function App() {
   const sourceCount = sourceEntries.length;
   const successCount = convertedEntries.filter((entry) => entry.blob).length;
   const progressPercent = progress.total ? Math.round((progress.completed / progress.total) * 100) : 0;
-  const selectedTransform = selectedSource?.transform ?? DEFAULT_TRANSFORM;
+  const selectedCount = activeIds.length;
+  const canUndo = history.length > 0;
+  const canRedo = future.length > 0;
+  const isJpegOutput = outputFormat === "image/jpeg";
+
+  function handleDragStart(id) {
+    setDraggedId(id);
+  }
+
+  function handleDropReorder(targetId) {
+    if (!draggedId || draggedId === targetId) return;
+    commitSourceEntries((previous) => {
+      const from = previous.findIndex((entry) => entry.id === draggedId);
+      const to = previous.findIndex((entry) => entry.id === targetId);
+      if (from < 0 || to < 0) return previous;
+      return moveItem(previous, from, to);
+    });
+    setDraggedId("");
+  }
 
   return (
     <main className="app-shell">
       <section className="hero-card">
         <div className="hero-copy">
           <p className="eyebrow">Image Converter</p>
-          <h1>複数画像をまとめて変換し、そのまま貼り直せます。</h1>
-          <p className="lead">並び替え、回転・反転、比較スライダー、ZIP レポート、PWA 対応までブラウザ上で完結します。</p>
+          <h1>画像を入れて、形式を選んで、すぐ保存。</h1>
+          <p className="lead">ドラッグ&ドロップや貼り付けで画像を追加し、必要なら回転やリサイズをして、個別保存または ZIP でまとめて書き出せます。</p>
+          <div className="quick-steps" aria-label="使い方の流れ">
+            <div className="step-chip"><strong>1</strong><span>画像を追加</span></div>
+            <div className="step-chip"><strong>2</strong><span>形式やサイズを調整</span></div>
+            <div className="step-chip"><strong>3</strong><span>保存またはコピー</span></div>
+          </div>
         </div>
 
         <div
@@ -496,10 +716,15 @@ export default function App() {
         >
           <input ref={inputRef} className="sr-only" type="file" accept="image/*" multiple onChange={handleFileChange} />
           <p className="dropzone-title">画像をまとめてドロップ</p>
-          <p className="dropzone-text">複数選択にも対応。スクリーンショットを貼り付けて追加することもできます。</p>
+          <p className="dropzone-text">ファイル選択、ドラッグ&ドロップ、クリップボード貼り付けに対応しています。</p>
+          <div className="dropzone-tips">
+            <span>複数画像を一度に追加</span>
+            <span><kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + <kbd>V</kbd> で貼り付け</span>
+            <span>AVIF は対応ブラウザのみ表示</span>
+          </div>
           <div className="dropzone-actions">
             <button type="button" className="primary-button" onClick={() => inputRef.current?.click()}>画像を選択</button>
-            <button type="button" className="ghost-button" onClick={() => window.focus()}>貼り付けを待つ</button>
+            <button type="button" className="ghost-button" onClick={() => window.focus()}>この画面に貼り付け</button>
             <button type="button" className="ghost-button" onClick={clearAll} disabled={!sourceCount}>すべてクリア</button>
           </div>
           <div className="summary-strip">
@@ -513,6 +738,11 @@ export default function App() {
         <div className="panel controls-panel">
           <div className="panel-header">
             <h2>変換設定</h2>
+            <p>左から設定し、右でプレビューと結果を確認できます。</p>
+          </div>
+
+          <div className="status-banner">
+            <strong>現在の状態</strong>
             <p>{status}</p>
           </div>
 
@@ -526,82 +756,186 @@ export default function App() {
             </div>
           </div>
 
-          <label className="field">
-            <span>プリセット</span>
-            <select value={preset} onChange={(event) => setPreset(event.target.value)}>
-              {availablePresets.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-          <p className="preset-note">{currentPreset?.description}</p>
+          <section className="subsection-card">
+            <div className="subsection-header">
+              <h3>1. 出力の基本設定</h3>
+              <p>まずは形式と画質を決めます。</p>
+            </div>
 
-          <label className="field">
-            <span>出力形式</span>
-            <select value={outputFormat} onChange={(event) => { touchCustomPreset(); setOutputFormat(event.target.value); }}>
-              {formatOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-
-          <label className="field">
-            <span>品質 ({Math.round(quality * 100)}%)</span>
-            <input type="range" min="0.4" max="1" step="0.01" value={quality} onChange={(event) => { touchCustomPreset(); setQuality(Number(event.target.value)); }} disabled={outputFormat === "image/png"} />
-          </label>
-
-          <div className="field checkbox-field">
-            <label>
-              <input type="checkbox" checked={resizeEnabled} onChange={(event) => { touchCustomPreset(); setResizeEnabled(event.target.checked); }} />
-              <span>リサイズを有効にする</span>
+            <label className="field">
+              <span>プリセット</span>
+              <select value={preset} onChange={(event) => setPreset(event.target.value)}>
+                {availablePresets.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
             </label>
-          </div>
+            <p className="preset-note">{currentPreset?.description}</p>
 
-          {resizeEnabled ? (
-            <div className="resize-panel">
-              <label className="field">
-                <span>リサイズモード</span>
-                <select value={resizeMode} onChange={(event) => { touchCustomPreset(); setResizeMode(event.target.value); }}>
-                  {RESIZE_MODE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
+            <label className="field">
+              <span>出力形式</span>
+              <select value={outputFormat} onChange={(event) => { touchCustomPreset(); setOutputFormat(event.target.value); }}>
+                {formatOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
 
-              <div className="field-grid">
+            {isJpegOutput ? (
+              <div className="field-grid compact-grid">
                 <label className="field">
-                  <span>{resizeMode === "scale" ? "倍率(%)" : "幅 / 基準値"}</span>
-                  <input type="number" min="1" placeholder="例: 1200" value={resizeWidth} onChange={(event) => { touchCustomPreset(); setResizeWidth(event.target.value); }} />
-                </label>
-                <label className="field">
-                  <span>{resizeMode === "contain" || resizeMode === "exact" ? "高さ" : "予備"}</span>
-                  <input type="number" min="1" placeholder="例: 800" value={resizeHeight} disabled={!(resizeMode === "contain" || resizeMode === "exact")} onChange={(event) => { touchCustomPreset(); setResizeHeight(event.target.value); }} />
+                  <span>JPEG 背景色</span>
+                  <div className="color-input-row">
+                    <input
+                      className="color-swatch"
+                      type="color"
+                      value={resolvedJpegBackground}
+                      onChange={(event) => {
+                        touchCustomPreset();
+                        setJpegBackground(event.target.value);
+                      }}
+                    />
+                    <input
+                      type="text"
+                      value={jpegBackground}
+                      placeholder="#ffffff"
+                      onChange={(event) => {
+                        touchCustomPreset();
+                        setJpegBackground(event.target.value);
+                      }}
+                    />
+                  </div>
                 </label>
               </div>
+            ) : null}
 
-              {(resizeMode === "contain" || resizeMode === "exact") ? (
-                <div className="field checkbox-field">
-                  <label>
-                    <input type="checkbox" checked={keepAspect} disabled={resizeMode === "exact"} onChange={(event) => { touchCustomPreset(); setKeepAspect(event.target.checked); }} />
-                    <span>縦横比を維持する</span>
+            <label className="field">
+              <span>品質 ({Math.round(quality * 100)}%)</span>
+              <input type="range" min="0.4" max="1" step="0.01" value={quality} onChange={(event) => { touchCustomPreset(); setQuality(Number(event.target.value)); }} disabled={outputFormat === "image/png"} />
+            </label>
+          </section>
+          <section className="subsection-card">
+            <div className="subsection-header">
+              <h3>2. サイズとファイル名</h3>
+              <p>必要なときだけ調整すれば十分です。</p>
+            </div>
+
+            <div className="field-grid compact-grid">
+              <label className="field">
+                <span>ファイル名プレフィックス</span>
+                <input type="text" placeholder="例: web" value={fileNamePrefix} onChange={(event) => setFileNamePrefix(event.target.value)} />
+              </label>
+              <label className="field">
+                <span>ファイル名サフィックス</span>
+                <input type="text" placeholder="例: optimized" value={fileNameSuffix} onChange={(event) => setFileNameSuffix(event.target.value)} />
+              </label>
+            </div>
+
+            <div className="field checkbox-field">
+              <label>
+                <input type="checkbox" checked={includeIndex} onChange={(event) => setIncludeIndex(event.target.checked)} />
+                <span>連番を付ける</span>
+              </label>
+            </div>
+
+            <div className="field checkbox-field">
+              <label>
+                <input type="checkbox" checked={resizeEnabled} onChange={(event) => { touchCustomPreset(); setResizeEnabled(event.target.checked); }} />
+                <span>リサイズを有効にする</span>
+              </label>
+            </div>
+
+            {resizeEnabled ? (
+              <div className="resize-panel">
+                <label className="field">
+                  <span>リサイズモード</span>
+                  <select value={resizeMode} onChange={(event) => { touchCustomPreset(); setResizeMode(event.target.value); }}>
+                    {RESIZE_MODE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                  </select>
+                </label>
+
+                <div className="field-grid">
+                  <label className="field">
+                    <span>{resizeMode === "scale" ? "倍率(%)" : "幅 / 基準値"}</span>
+                    <input type="number" min="1" placeholder="例: 1200" value={resizeWidth} onChange={(event) => { touchCustomPreset(); setResizeWidth(event.target.value); }} />
+                  </label>
+                  <label className="field">
+                    <span>{resizeMode === "contain" || resizeMode === "exact" ? "高さ" : "予備"}</span>
+                    <input type="number" min="1" placeholder="例: 800" value={resizeHeight} disabled={!(resizeMode === "contain" || resizeMode === "exact")} onChange={(event) => { touchCustomPreset(); setResizeHeight(event.target.value); }} />
                   </label>
                 </div>
-              ) : null}
-            </div>
-          ) : null}
 
-          <div className="transform-card">
+                {(resizeMode === "contain" || resizeMode === "exact") ? (
+                  <div className="field checkbox-field">
+                    <label>
+                      <input type="checkbox" checked={keepAspect} disabled={resizeMode === "exact"} onChange={(event) => { touchCustomPreset(); setKeepAspect(event.target.checked); }} />
+                      <span>縦横比を維持する</span>
+                    </label>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
+
+          <section className="transform-card">
+            <div className="subsection-header">
+              <h3>3. 選択中の画像を調整</h3>
+              <p>複数選択した画像へまとめて反映できます。</p>
+            </div>
             <div className="progress-row">
               <span>選択中の画像調整</span>
-              <strong>{selectedSource ? "有効" : "未選択"}</strong>
+              <strong>{selectedCount ? `${selectedCount}件選択中` : "未選択"}</strong>
             </div>
+            <div className="history-actions">
+              <button type="button" className="ghost-button mini-button" disabled={!canUndo} onClick={handleUndo}>Undo</button>
+              <button type="button" className="ghost-button mini-button" disabled={!canRedo} onClick={handleRedo}>Redo</button>
+            </div>
+            <p className="selection-hint">一覧では <kbd>Ctrl</kbd> / <kbd>Cmd</kbd> + クリックで複数選択できます。</p>
             <div className="mini-actions">
-              <button type="button" className="ghost-button mini-button" disabled={!selectedSource} onClick={() => updateSelectedTransform({ rotation: (selectedTransform.rotation + 270) % 360 })}>左回転</button>
-              <button type="button" className="ghost-button mini-button" disabled={!selectedSource} onClick={() => updateSelectedTransform({ rotation: (selectedTransform.rotation + 90) % 360 })}>右回転</button>
-              <button type="button" className="ghost-button mini-button" disabled={!selectedSource} onClick={() => updateSelectedTransform({ flipH: !selectedTransform.flipH })}>左右反転</button>
-              <button type="button" className="ghost-button mini-button" disabled={!selectedSource} onClick={() => updateSelectedTransform({ flipV: !selectedTransform.flipV })}>上下反転</button>
+              <button
+                type="button"
+                className="ghost-button mini-button"
+                disabled={!selectedCount}
+                onClick={() => applyBulkTransform((transform) => ({ ...transform, rotation: (transform.rotation + 270) % 360 }))}
+              >
+                左回転
+              </button>
+              <button
+                type="button"
+                className="ghost-button mini-button"
+                disabled={!selectedCount}
+                onClick={() => applyBulkTransform((transform) => ({ ...transform, rotation: (transform.rotation + 90) % 360 }))}
+              >
+                右回転
+              </button>
+              <button
+                type="button"
+                className="ghost-button mini-button"
+                disabled={!selectedCount}
+                onClick={() => applyBulkTransform((transform) => ({ ...transform, flipH: !transform.flipH }))}
+              >
+                左右反転
+              </button>
+              <button
+                type="button"
+                className="ghost-button mini-button"
+                disabled={!selectedCount}
+                onClick={() => applyBulkTransform((transform) => ({ ...transform, flipV: !transform.flipV }))}
+              >
+                上下反転
+              </button>
+              <button type="button" className="ghost-button mini-button danger-button" disabled={!selectedCount} onClick={removeSelectedEntries}>選択項目を削除</button>
             </div>
-          </div>
+          </section>
 
-          <div className="engine-note"><span>変換エンジン</span><strong>{conversionEngine === "worker" ? "Web Worker" : "Main Thread"}</strong></div>
-          <div className="engine-note"><span>失敗画像</span><strong>{failedEntries.length}件</strong></div>
-          <p className="hint">ZIP 保存時には `manifest.json` に加えて `report.html` も同梱されます。JPEG の EXIF 向きは自動補正します。</p>
+          <section className="subsection-card compact-section">
+            <div className="engine-note"><span>変換エンジン</span><strong>{conversionEngine === "worker" ? "Web Worker" : "Main Thread"}</strong></div>
+            <div className="engine-note"><span>失敗画像</span><strong>{failedEntries.length}件</strong></div>
+            <p className="hint">ZIP 保存時には `manifest.json` と `report.html` が同梱されます。JPEG の EXIF 向きも自動補正します。</p>
+          </section>
 
-          <div className="stacked-actions">
+          <section className="subsection-card">
+            <div className="subsection-header">
+              <h3>4. 保存と共有</h3>
+              <p>1枚ずつでも、まとめてでも保存できます。</p>
+            </div>
+            <div className="stacked-actions">
             {selectedConverted?.url ? (
               <a className="primary-button download-button" href={selectedConverted.url} download={selectedConverted.outputName}>
                 {isConverting ? "変換中..." : "選択中の画像をダウンロード"}
@@ -609,13 +943,20 @@ export default function App() {
             ) : <div className="download-placeholder">選択中の画像を変換するとここから保存できます。</div>}
 
             <button type="button" className="ghost-button wide-button" onClick={handleRetryFailed} disabled={!failedEntries.length || isConverting}>失敗画像だけ再試行</button>
+            <button type="button" className="ghost-button wide-button" onClick={handleCancelConversion} disabled={!isConverting}>変換をキャンセル</button>
             <button type="button" className="ghost-button wide-button" onClick={handleDownloadAll} disabled={!successCount}>変換済みを個別に一括ダウンロード</button>
             <button type="button" className="ghost-button wide-button" onClick={handleDownloadZip} disabled={!successCount || isZipping}>{isZipping ? "ZIP を作成中..." : "manifest と HTML レポート付き ZIP を保存"}</button>
             <button type="button" className="ghost-button wide-button" onClick={handleCopySelected} disabled={!selectedConverted?.blob}>変換後をクリップボードにコピー</button>
           </div>
+          </section>
         </div>
 
         <div className="panel preview-panel">
+          <div className="workspace-overview">
+            <div className="overview-chip"><span>選択中</span><strong>{selectedSource ? selectedSource.file.name : "なし"}</strong></div>
+            <div className="overview-chip"><span>出力形式</span><strong>{currentOption.label}</strong></div>
+            <div className="overview-chip"><span>保存可能</span><strong>{successCount}件</strong></div>
+          </div>
           <div className="preview-grid">
             <article className="preview-card">
               <div className="preview-header">
@@ -664,15 +1005,28 @@ export default function App() {
 
           <div className="gallery-card">
             <div className="gallery-header">
-              <h2>画像一覧</h2>
-              <p>{sourceCount ? `${sourceCount}件の画像を管理中` : "まだ画像はありません"}</p>
+              <div>
+                <h2>画像一覧</h2>
+                <p>{sourceCount ? `${sourceCount}件の画像を管理中` : "まだ画像はありません"}</p>
+              </div>
+              <p>{selectedCount ? `${selectedCount}件選択中` : "単体選択"}</p>
             </div>
             <div className="gallery-list">
               {sourceEntries.length ? sourceEntries.map((entry, index) => {
                 const converted = convertedEntries.find((item) => item.id === entry.id);
-                const isSelected = selectedSource?.id === entry.id;
+                const isSelected = activeIds.includes(entry.id);
                 return (
-                  <button key={entry.id} type="button" className={`gallery-item ${isSelected ? "selected" : ""}`} onClick={() => setSelectedId(entry.id)}>
+                  <button
+                    key={entry.id}
+                    type="button"
+                    draggable
+                    className={`gallery-item ${isSelected ? "selected" : ""} ${draggedId === entry.id ? "dragging-item" : ""}`}
+                    onClick={(event) => toggleSelected(entry.id, event.metaKey || event.ctrlKey)}
+                    onDragStart={() => handleDragStart(entry.id)}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={() => handleDropReorder(entry.id)}
+                    onDragEnd={() => setDraggedId("")}
+                  >
                     <img src={entry.sourceUrl} alt="" className="gallery-thumb" />
                     <div className="gallery-meta">
                       <strong>{entry.file.name}</strong>

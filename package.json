@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:e2e": "node ./scripts/e2e.mjs"
   },
   "dependencies": {
     "jszip": "^3.10.1",
