@@ -34,12 +34,17 @@ button {
   border: none;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
 #root {
   min-height: 100vh;
 }
 
 .app-shell {
-  width: min(1180px, calc(100% - 32px));
+  width: min(1240px, calc(100% - 32px));
   margin: 0 auto;
   padding: 32px 0 48px;
 }
@@ -51,14 +56,16 @@ button {
 }
 
 .hero-card {
-  grid-template-columns: 1.1fr 0.9fr;
+  grid-template-columns: 1.08fr 0.92fr;
   align-items: stretch;
   margin-bottom: 24px;
 }
 
 .hero-copy,
 .dropzone,
-.panel {
+.panel,
+.comparison-card,
+.gallery-card {
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(11, 15, 27, 0.68);
   backdrop-filter: blur(18px);
@@ -80,13 +87,13 @@ button {
 
 .hero-copy h1 {
   margin: 0;
-  font-size: clamp(2.4rem, 4vw, 4.8rem);
+  font-size: clamp(2.4rem, 4vw, 4.6rem);
   line-height: 0.98;
   letter-spacing: -0.04em;
 }
 
 .lead {
-  max-width: 34rem;
+  max-width: 38rem;
   margin: 22px 0 0;
   color: rgba(247, 247, 242, 0.8);
   font-size: 1rem;
@@ -154,23 +161,63 @@ button {
   color: #f7f7f2;
 }
 
+.wide-button {
+  width: 100%;
+  justify-content: center;
+}
+
 .primary-button:hover,
 .ghost-button:hover,
 .download-button:hover {
   transform: translateY(-1px);
 }
 
-.workspace {
-  grid-template-columns: 360px minmax(0, 1fr);
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 24px;
 }
 
-.panel {
+.summary-strip div {
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.summary-strip strong,
+.metric-card strong {
+  display: block;
+  font-size: 1.4rem;
+}
+
+.summary-strip span,
+.metric-card span {
+  color: rgba(247, 247, 242, 0.68);
+  font-size: 0.92rem;
+}
+
+.expanded-workspace {
+  grid-template-columns: 360px minmax(0, 1fr);
+  align-items: start;
+}
+
+.panel,
+.comparison-card,
+.gallery-card {
   border-radius: 24px;
   padding: 24px;
 }
 
+.preview-panel {
+  display: grid;
+  gap: 20px;
+}
+
 .panel-header h2,
-.preview-header h2 {
+.preview-header h2,
+.comparison-card h2,
+.gallery-header h2 {
   margin: 0;
   font-size: 1.1rem;
 }
@@ -178,7 +225,8 @@ button {
 .panel-header p,
 .preview-header p,
 .hint,
-.download-placeholder {
+.download-placeholder,
+.gallery-header p {
   color: rgba(247, 247, 242, 0.72);
 }
 
@@ -193,16 +241,25 @@ button {
 }
 
 .field select,
-.field input[type="range"] {
+.field input[type="range"],
+.field input[type="number"] {
   width: 100%;
 }
 
-.field select {
+.field select,
+.field input[type="number"] {
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 16px;
   padding: 14px 16px;
   background: rgba(255, 255, 255, 0.05);
   color: #f7f7f2;
+}
+
+.field input[type="number"]::placeholder {
+  color: rgba(247, 247, 242, 0.4);
+}
+
+.field select {
   color-scheme: dark;
 }
 
@@ -215,8 +272,39 @@ button {
   color: #f7f7f2;
 }
 
+.checkbox-field label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.checkbox-field input {
+  inline-size: 18px;
+  block-size: 18px;
+  accent-color: #ff9c54;
+}
+
+.resize-panel {
+  margin-top: 8px;
+  border-radius: 18px;
+  padding: 2px 18px 18px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .hint {
   margin-top: 18px;
+}
+
+.stacked-actions {
+  display: grid;
+  gap: 12px;
+  margin-top: 28px;
 }
 
 .download-button,
@@ -225,14 +313,13 @@ button {
   align-items: center;
   justify-content: center;
   min-height: 56px;
-  margin-top: 28px;
+  text-align: center;
 }
 
 .download-placeholder {
   border: 1px dashed rgba(255, 255, 255, 0.16);
   border-radius: 20px;
   padding: 0 16px;
-  text-align: center;
 }
 
 .preview-grid {
@@ -277,6 +364,101 @@ button {
   text-align: center;
 }
 
+.comparison-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.metric-card {
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.gallery-header {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.gallery-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.gallery-item {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr) auto auto;
+  gap: 14px;
+  align-items: center;
+  width: 100%;
+  padding: 12px;
+  border-radius: 18px;
+  color: inherit;
+  text-align: left;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid transparent;
+}
+
+.gallery-item.selected {
+  border-color: rgba(255, 180, 84, 0.75);
+  background: rgba(255, 180, 84, 0.08);
+}
+
+.gallery-thumb {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.gallery-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.gallery-meta strong,
+.gallery-meta span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gallery-meta span {
+  color: rgba(247, 247, 242, 0.68);
+  font-size: 0.92rem;
+}
+
+.gallery-badges,
+.remove-chip {
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 0.84rem;
+}
+
+.gallery-badges {
+  background: rgba(72, 155, 255, 0.16);
+  color: #aad0ff;
+}
+
+.remove-chip {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.empty-gallery {
+  border: 1px dashed rgba(255, 255, 255, 0.16);
+  border-radius: 18px;
+  padding: 24px;
+  text-align: center;
+  color: rgba(247, 247, 242, 0.62);
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -302,26 +484,46 @@ kbd {
   font-size: 0.94em;
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1040px) {
   .hero-card,
-  .workspace,
+  .expanded-workspace,
   .preview-grid {
     grid-template-columns: 1fr;
   }
+}
 
+@media (max-width: 760px) {
   .app-shell {
-    width: min(100% - 24px, 1180px);
+    width: min(100% - 24px, 1240px);
     padding-top: 24px;
   }
 
   .hero-copy,
   .dropzone,
-  .panel {
+  .panel,
+  .comparison-card,
+  .gallery-card {
     padding: 22px;
+  }
+
+  .field-grid,
+  .comparison-grid,
+  .summary-strip,
+  .gallery-item {
+    grid-template-columns: 1fr;
+  }
+
+  .gallery-item {
+    justify-items: start;
   }
 
   .preview-image,
   .empty-preview {
     min-height: 240px;
+  }
+
+  .gallery-thumb {
+    width: 100%;
+    height: 180px;
   }
 }
